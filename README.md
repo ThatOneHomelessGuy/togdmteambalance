@@ -32,12 +32,12 @@ Note: After changing the cvars in your cfg file, be sure to RCon the new values 
 
 
 ## Admin Commands:
-sm_chkbal - Checks if teams are balanced. If unbalanced, sets plugin to balance next player that dies (unless immune or in cooldown, if applicable)
-sm_chkimm - Checks which players in the server are immune to Team Balance. Prints output to clients console.
+* sm_chkbal - Checks if teams are balanced. If unbalanced, sets plugin to balance next player that dies (unless immune or in cooldown, if applicable)
+* sm_chkimm - Checks which players in the server are immune to Team Balance. Prints output to clients console.
 
 
 
-##Changelog:
+## Changelog:
 <details>
 <summary>Click to Open Spoiler</summary>
 <p>

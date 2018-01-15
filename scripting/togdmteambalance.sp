@@ -502,5 +502,6 @@ Changelog:
 		* Changed to new syntax and updated code for entire plugin. Changes untested.
 	1/14/18 v2.0.1-debug:
 		* Created debug version to test for issues recently reported.
+	1/14/18 v2.0.1:
 		* Apparently view_as can be buggy for floats. Changed to just manually make it a absolute value for the difference.
 */

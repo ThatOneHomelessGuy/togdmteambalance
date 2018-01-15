@@ -1,5 +1,5 @@
 #pragma semicolon 1
-#define PLUGIN_VERSION "2.0"
+#define PLUGIN_VERSION "2.0.1"
 #include <sourcemod>
 #include <autoexecconfig>
 #include <sdktools>
@@ -118,6 +118,7 @@ void CheckTeams()		//count players and check for unbalance
 	g_iNumT = 0;
 	g_iNumCT = 0;
 	g_iTeamWithMore = 0;
+	//Log("togdm_debug.log", "Checking teams. Count reset.");
 	
 	//count players on each team
 	for(int i = 1; i <= MaxClients; i++)
@@ -136,9 +137,13 @@ void CheckTeams()		//count players and check for unbalance
 	}
 	
 	//check if unbalanced
-	float fDifference = view_as<float>(g_iNumCT - g_iNumT);		//need to use float for abs value
-	fDifference = FloatAbs(fDifference);
-	if((fDifference + 1) > g_hBalanceDifference.IntValue)
+	int iDifference = g_iNumCT - g_iNumT;
+	if(iDifference < 0)	//take absolute value
+	{
+		iDifference *= -1;
+	}
+	//Log("togdm_debug.log", "T's: %i. CT's: %i. Difference: %i", g_iNumT, g_iNumCT, iDifference);
+	if((iDifference) >= g_hBalanceDifference.IntValue)
 	{
 		g_bUnbalanced = true;
 		
@@ -150,10 +155,12 @@ void CheckTeams()		//count players and check for unbalance
 		{
 			g_iTeamWithMore = 2;
 		}
+		//Log("togdm_debug.log", "Setting global flag as UNBALANCED. Team with more: %i", g_iTeamWithMore);
 	}
 	else
 	{
 		g_bUnbalanced = false;
+		//Log("togdm_debug.log", "Setting global flag as BALANCED.");
 	}
 }
 
@@ -176,6 +183,212 @@ public void OnMapStart()
 			}
 		}
 	}
+}
+
+public void OnClientPostAdminCheck(int client)		//check players for if they are movable
+{
+	ga_bMovable[client] = false;
+	
+	if(IsValidClient(client))
+	{
+		if(!HasFlags(client, g_sImmuneFlag))
+		{
+			ga_bMovable[client] = true;
+		}
+	}
+}
+
+public void OnClientPutInServer(int client)
+{
+	ga_bMovable[client] = false;
+	ga_bInCooldown[client] = false;
+}
+
+public Action TimerCB_CheckBalance(Handle hTimer)
+{
+	CheckTeams();
+	return Plugin_Continue;
+}
+
+public Action Timer_Cooldown(Handle hTimer, any iUserID)
+{
+	int client = GetClientOfUserId(iUserID);
+	
+	if(IsValidClient(client))
+	{
+		ga_bInCooldown[client] = false;
+	}
+	return Plugin_Continue;
+}
+
+public void EventPlayerDeath(Handle hEvent, const char[] sEventName, bool bDontBroadcast)
+{
+	//Log("togdm_debug.log", "Player death event.");
+	if(g_hEnabled.IntValue)
+	{
+		//Log("togdm_debug.log", "Player death event. Plugin is enabled.");
+		if(g_bUnbalanced)	//if teams are unbalanced
+		{
+			//Log("togdm_debug.log", "Player death event. Teams unbalanced.");
+			int iUserID = GetEventInt(hEvent, "userid");
+			int client = GetClientOfUserId(iUserID);
+			
+			if(IsValidClient(client))
+			{
+				//Log("togdm_debug.log", "Player death event. Client is valid: %L", client);
+				if(ga_bMovable[client])
+				{
+					//Log("togdm_debug.log", "Player death event. Client is moveable.");
+					if(GetClientTeam(client) == g_iTeamWithMore)
+					{
+						//Log("togdm_debug.log", "Player death event. Client is on team with more.");
+						if(((g_iNumCT + g_iNumT) >= g_hCooldownPlayerCount.IntValue) && (g_hCooldownTime.FloatValue > 0.0))			//if player count is above or equal to set cooldown player count, and cooldown isnt set to disabled
+						{
+							//Log("togdm_debug.log", "Player death event. Cooldown check criteria met.");
+							if(!ga_bInCooldown[client])	//check if player is in cooldown
+							{
+								//Log("togdm_debug.log", "Player death event. Client not in cooldown.");
+								ChangeTeam(client);
+								g_bUnbalanced = false;	//assume teams are balanced until checked again
+								ga_bInCooldown[client] = true;
+								CreateTimer(g_hCooldownTime.FloatValue, Timer_Cooldown, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+								//Log("togdm_debug.log", "Player death event. %L has been switch and now has a cooldown of %f seconds.", client, g_hCooldownTime.FloatValue);
+							}
+						}
+						else	//no cooldown check
+						{
+							//Log("togdm_debug.log", "Player death event. Changinging client team: %L", client);
+							ChangeTeam(client);
+							g_bUnbalanced = false;	//assume teams are balanced until checked again
+							if(g_hCooldownTime.FloatValue > 0.0)	//if cooldowns are set to disabled, then dont bother with timer.
+							{
+								ga_bInCooldown[client] = true;
+								CreateTimer(g_hCooldownTime.FloatValue, Timer_Cooldown, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);		//still create the timer in case player count reaches g_hCooldownPlayerCount.IntValue
+							}
+						}
+					}
+					else
+					{
+						//Log("togdm_debug.log", "Player death event. Player not on team with more.");
+					}
+				}
+				else
+				{
+					PrintToChat(client, "\x04[TOG TB] You have been skipped for team balance due to immunity!");
+					//Log("togdm_debug.log", "Player death event. Player skipped due to immunity.");
+				}
+			}
+			else
+			{
+				//Log("togdm_debug.log", "Player death event. Player not valid.");
+			}
+		}
+		else
+		{
+			//Log("togdm_debug.log", "Player death event. Teams currently balanced.");
+		}
+	}
+	else
+	{
+		//Log("togdm_debug.log", "Player death event. Plugin disabled.");
+	}
+	//Log("togdm_debug.log", "Player death event COMPLETE.");
+}
+
+void ChangeTeam(int client)
+{
+	//Log("togdm_debug.log", "Changing player team: %L", client);
+	PrintToChat(client, "\x03You are being switched to balance teams!!!");
+	PrintCenterText(client, "You are being switched to balance teams!!!");
+	PrintHintText(client, "You are being switched to balance teams!!!");
+	PrintToChatAll("\x03Player %N is being switched to balance teams!", client);
+	PrintToServer("Player %N is being switched to balance teams!", client);
+	if(GetClientTeam(client) == 2)
+	{
+		ChangeToTeam(client, 3, 0.0, IsPlayerAlive(client));
+	}
+	else if(GetClientTeam(client) == 3)
+	{
+		ChangeToTeam(client, 2, 0.0, IsPlayerAlive(client));
+	}
+}
+
+void ChangeToTeam(int client, int iTeam, float fDelay = 0.0, bool bRespawn = false)
+{
+	if(IsValidClient(client))
+	{
+		CreateTimer(fDelay, Timer_ChangeTeamSpec, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+		if(iTeam == 2)
+		{
+			CreateTimer(fDelay + 1.0, Timer_ChangeTeamToT, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+		}
+		else
+		{
+			CreateTimer(fDelay + 1.0, Timer_ChangeTeamToCT, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+		}
+		
+		if(bRespawn)
+		{
+			CreateTimer(fDelay + 1.5, TimerCB_RespawnPlayer, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+		}
+	}
+}
+
+public Action Timer_ChangeTeamSpec(Handle hTimer, any iUserID)
+{
+	int client = GetClientOfUserId(iUserID);
+	if(IsValidClient(client))
+	{
+		ChangeClientTeam(client, 1);
+	}
+}
+
+public Action Timer_ChangeTeamToCT(Handle hTimer, any iUserID)
+{
+	int client = GetClientOfUserId(iUserID);
+	if(IsValidClient(client))
+	{
+		ChangeClientTeam(client, 3);
+	}
+	
+	CreateTimer(8.0, Timer_RecheckTeams, _, TIMER_FLAG_NO_MAPCHANGE);
+}
+
+public Action Timer_ChangeTeamToT(Handle hTimer, any iUserID)
+{
+	int client = GetClientOfUserId(iUserID);
+	if(IsValidClient(client))
+	{
+		ChangeClientTeam(client, 2);
+	}
+	
+	CreateTimer(8.0, Timer_RecheckTeams, _, TIMER_FLAG_NO_MAPCHANGE);
+}
+
+public Action TimerCB_RespawnPlayer(Handle hTimer, any iUserID)
+{
+	int client = GetClientOfUserId(iUserID);
+	if(!IsValidClient(client))
+	{
+		if(!IsPlayerAlive(client))
+		{
+			CS_RespawnPlayer(client);
+		}
+	}
+}
+
+public Action Timer_RecheckTeams(Handle hTimer)
+{
+	CheckTeams();
+}
+
+bool IsValidClient(int client/*, bool bAllowBots = false, bool bAllowDead = true*/)
+{
+	if(!(1 <= client <= MaxClients) || !IsClientInGame(client) /*|| (IsFakeClient(client) && !bAllowBots) || (!IsPlayerAlive(client) && !bAllowDead) || IsClientSourceTV(client) || IsClientReplay(client)*/)
+	{
+		return false;
+	}
+	return true;
 }
 
 bool HasFlags(int client, char[] sFlags)
@@ -262,181 +475,12 @@ bool HasFlags(int client, char[] sFlags)
 	}
 }
 
-public void OnClientPostAdminCheck(int client)		//check players for if they are movable
+stock void Log(char[] sPath, const char[] sMsg, any ...)		//TOG logging function - path is relative to logs folder.
 {
-	ga_bMovable[client] = false;
-	
-	if(IsValidClient(client))
-	{
-		if(!HasFlags(client, g_sImmuneFlag))
-		{
-			ga_bMovable[client] = true;
-		}
-	}
-}
-
-public void OnClientPutInServer(int client)
-{
-	ga_bMovable[client] = false;
-	ga_bInCooldown[client] = false;
-}
-
-public Action TimerCB_CheckBalance(Handle hTimer)
-{
-	CheckTeams();
-	return Plugin_Continue;
-}
-
-public Action Timer_Cooldown(Handle hTimer, any iUserID)
-{
-	int client = GetClientOfUserId(iUserID);
-	
-	if(IsValidClient(client))
-	{
-		ga_bInCooldown[client] = false;
-	}
-	return Plugin_Continue;
-}
-
-public void EventPlayerDeath(Handle hEvent, const char[] sEventName, bool bDontBroadcast)
-{
-	if(g_hEnabled.IntValue)
-	{
-		if(g_bUnbalanced)	//if teams are unbalanced
-		{
-			int iUserID = GetEventInt(hEvent, "userid");
-			int client = GetClientOfUserId(iUserID);
-			
-			if(IsValidClient(client))
-			{
-				if(ga_bMovable[client])
-				{
-					if(GetClientTeam(client) == g_iTeamWithMore)
-					{
-						if(((g_iNumCT + g_iNumT) >= g_hCooldownPlayerCount.IntValue) && (g_hCooldownTime.FloatValue > 0.0))			//if player count is above or equal to set cooldown player count, and cooldown isnt set to disabled
-						{
-							if(!ga_bInCooldown[client])	//check if player is in cooldown
-							{
-								ChangeTeam(client);
-								g_bUnbalanced = false;	//assume teams are balanced until checked again
-								ga_bInCooldown[client] = true;
-								CreateTimer(g_hCooldownTime.FloatValue, Timer_Cooldown, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
-							}
-						}
-						else	//no cooldown check
-						{
-							ChangeTeam(client);
-							g_bUnbalanced = false;	//assume teams are balanced until checked again
-							if(g_hCooldownTime.FloatValue > 0.0)	//if cooldowns are set to disabled, then dont bother with timer.
-							{
-								ga_bInCooldown[client] = true;
-								CreateTimer(g_hCooldownTime.FloatValue, Timer_Cooldown, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);		//still create the timer in case player count reaches g_hCooldownPlayerCount.IntValue
-							}
-						}
-					}
-				}
-				else
-				{
-					PrintToChat(client, "\x04[TOG TB] You have been skipped for team balance due to immunity!");
-				}
-			}
-		}
-	}
-}
-
-void ChangeTeam(int client)
-{
-	PrintToChat(client, "\x03You are being switched to balance teams!!!");
-	PrintCenterText(client, "You are being switched to balance teams!!!");
-	PrintHintText(client, "You are being switched to balance teams!!!");
-	PrintToChatAll("\x03Player %N is being switched to balance teams!", client);
-	PrintToServer("Player %N is being switched to balance teams!", client);
-	if(GetClientTeam(client) == 2)
-	{
-		ChangeToTeam(client, 3, 0.0, IsPlayerAlive(client));
-	}
-	else if(GetClientTeam(client) == 3)
-	{
-		ChangeToTeam(client, 2, 0.0, IsPlayerAlive(client));
-	}
-}
-
-void ChangeToTeam(int client, int iTeam, float fDelay = 0.0, bool bRespawn = false)
-{
-	if(IsValidClient(client))
-	{
-		CreateTimer(fDelay, Timer_ChangeTeamSpec, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
-		if(iTeam == 2)
-		{
-			CreateTimer(fDelay + 1.0, Timer_ChangeTeamToT, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
-		}
-		else
-		{
-			CreateTimer(fDelay + 1.0, Timer_ChangeTeamToCT, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
-		}
-		
-		if(bRespawn)
-		{
-			CreateTimer(fDelay + 1.5, TimerCB_RespawnPlayer, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
-		}
-	}
-}
-
-public Action Timer_ChangeTeamSpec(Handle hTimer, any iUserID)
-{
-	int client = GetClientOfUserId(iUserID);
-	if(IsValidClient(client))
-	{
-		ChangeClientTeam(client, 1);
-	}
-}
-
-public Action Timer_ChangeTeamToCT(Handle hTimer, any iUserID)
-{
-	int client = GetClientOfUserId(iUserID);
-	if(IsValidClient(client))
-	{
-		ChangeClientTeam(client, 3);
-	}
-	
-	CreateTimer(8.0, Timer_RecheckTeams, _, TIMER_FLAG_NO_MAPCHANGE);
-}
-
-public Action Timer_ChangeTeamToT(Handle hTimer, any iUserID)
-{
-	int client = GetClientOfUserId(iUserID);
-	if(IsValidClient(client))
-	{
-		ChangeClientTeam(client, 2);
-	}
-	
-	CreateTimer(8.0, Timer_RecheckTeams, _, TIMER_FLAG_NO_MAPCHANGE);
-}
-
-public Action TimerCB_RespawnPlayer(Handle hTimer, any iUserID)
-{
-	int client = GetClientOfUserId(iUserID);
-	if(!IsValidClient(client))
-	{
-		if(!IsPlayerAlive(client))
-		{
-			CS_RespawnPlayer(client);
-		}
-	}
-}
-
-public Action Timer_RecheckTeams(Handle hTimer)
-{
-	CheckTeams();
-}
-
-bool IsValidClient(int client, bool bAllowBots = false, bool bAllowDead = true)
-{
-	if(!(1 <= client <= MaxClients) || !IsClientInGame(client) || (IsFakeClient(client) && !bAllowBots) || IsClientSourceTV(client) || IsClientReplay(client) || (!IsPlayerAlive(client) && !bAllowDead))
-	{
-		return false;
-	}
-	return true;
+	char sLogFilePath[PLATFORM_MAX_PATH], sFormattedMsg[1500];
+	BuildPath(Path_SM, sLogFilePath, sizeof(sLogFilePath), "logs/%s", sPath);
+	VFormat(sFormattedMsg, sizeof(sFormattedMsg), sMsg, 3);
+	LogToFileEx(sLogFilePath, "%s", sFormattedMsg);
 }
 
 /*
@@ -456,4 +500,7 @@ Changelog:
 		* Added a few more notifications to the player being moved.
 	11/11/16 v2.0:
 		* Changed to new syntax and updated code for entire plugin. Changes untested.
+	1/14/18 v2.0.1-debug:
+		* Created debug version to test for issues recently reported.
+		* Apparently view_as can be buggy for floats. Changed to just manually make it a absolute value for the difference.
 */

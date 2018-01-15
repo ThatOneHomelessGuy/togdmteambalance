@@ -41,10 +41,10 @@ Note: After changing the cvars in your cfg file, be sure to RCon the new values 
 <details>
 <summary>Click to Open Spoiler</summary>
 <p>
-11/11/16 (v2.0.1)
+1/14/18 (v2.0.1)
 * Apparently view_as can be buggy for floats. Changed to just manually make it a absolute value for the difference.
 
-11/11/16 (v2.0.1-debug)
+1/14/18 (v2.0.1-debug)
 * Created debug version to test for issues recently reported.
 
 11/11/16 (v2.0)
